@@ -70,7 +70,7 @@ io.on("connection", (socket) => {
       const projectId = roomId;
 
       if (!isValidObjectId(projectId)) {
-       return socket.emit("load-project", { project: null, error: "Invalid Project ID" });
+        return socket.emit("load-project", { project: null, error: "Invalid Project ID" });
       }
 
       if (!projectId) {
@@ -83,7 +83,7 @@ io.on("connection", (socket) => {
       }).populate("participants", "_id name");
 
       if (!project) {
-        return socket.emit("load-project", { project: null, error:"Project not found!" });
+        return socket.emit("load-project", { project: null, error: "Project not found!" });
       }
 
       const isOwner = project.owner.equals(userId);
@@ -94,8 +94,6 @@ io.on("connection", (socket) => {
       if (!isOwner && !isParticipant) {
         return socket.emit("load-project", { project: null, accessRequired: true });
       }
-
-      console.log({ project });
 
       const users = Object.values(onlineUsers[roomId] || {});
 
@@ -108,7 +106,10 @@ io.on("connection", (socket) => {
         ...project.toObject(),
         participants
       }
+
+
       socket.emit("load-project", { project: projectToSend });
+      console.log({ message: "Project sent successfully!" });
 
     } catch (error) {
       console.error("Error in getting vast project:", error);
@@ -146,7 +147,6 @@ io.on("connection", (socket) => {
 
       console.log({
         message: "Element added successfully",
-        element: newElement
       })
 
     } catch (error) {
