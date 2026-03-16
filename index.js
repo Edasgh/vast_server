@@ -3,12 +3,14 @@ import express from "express";
 import http from "http";
 import { Server } from "socket.io";
 import cors from "cors";
-import mongoose from "mongoose";
+import mongoose, { isValidObjectId } from "mongoose";
 import dotenv from "dotenv";
 import cookieParser from "cookie-parser";
 
 import userRoutes from "./routes/userRoutes.js";
 import projectRoutes from "./routes/projectRoutes.js";
+import Project from "./models/projectModel.js";
+import Element from "./models/elementModel.js";
 // import accessRequestRoutes from "./routes/accessRequestRoutes.js";
 // import Scriible from "./models/scriibleModel.js";
 
@@ -16,8 +18,8 @@ dotenv.config();
 
 const app = express();
 app.use(cors({
-    origin: process.env.CLIENT_BASE_URL || "http://localhost:5173", // frontend URL
-    credentials: true,
+  origin: process.env.CLIENT_BASE_URL || "http://localhost:5173", // frontend URL
+  credentials: true,
 }));
 app.use(express.json()); // ⭐ REQUIRED to parse JSON body
 app.use(express.urlencoded({ extended: true }));
@@ -29,221 +31,170 @@ app.use("/api/projects", projectRoutes);
 // app.use("/api/requests", accessRequestRoutes);
 
 
-const strokeBuffers = new Map();
-const strokeDirty = new Map();
-const undoBuffers = new Map();
+const onlineUsers = {}
+// structure:
+// {
+//   roomId: {
+//      socketId: { userId, name }
+//   }
+// }
+
 
 const server = http.createServer(app);
 const io = new Server(server, {
-    cors: {
-        origin: process.env.CLIENT_BASE_URL || "http://localhost:5173", // React app's URL
-        methods: ["GET", "POST"],
-        credentials: true
-    },
+  cors: {
+    origin: "http://localhost:5173", // React app's URL
+    methods: ["GET", "POST"],
+    credentials: true
+  },
 });
 
 
-/*
-
 io.on("connection", (socket) => {
+
   console.log("A user connected:", socket.id);
-  socket.on("join-room", async ({ docId, userId }) => {
 
-    socket.join(docId);
-
-    const doc = await Scriible.findById(docId);
-
-    if (!doc) {
-      socket.emit("load-strokes", { savedStrokes: [], accessRequired: false });
-      return;
+  socket.on("join", async ({ userId, roomId }) => {
+    socket.join(roomId);
+    console.log("joined room : ", roomId);
+    if (!onlineUsers[roomId]) {
+      onlineUsers[roomId] = {};
     }
 
-    if (!doc.participants.includes(userId)) {
-      socket.emit("load-strokes", { savedStrokes: [], accessRequired: true });
-      return;
-    }
+    onlineUsers[roomId][socket.id] = {
+      userId,
+    };
 
-    // initialize buffers
-    if (!strokeBuffers.has(docId)) {
-      // strokeBuffers.set(docId, [...(doc?.strokes || [])]);
-      strokeBuffers.set(docId, [...(doc?.strokes || [])]);
-      undoBuffers.set(docId, []);
-      strokeDirty.set(docId, false);
-    }
-
-    // if (!undoBuffers.has(docId)) {
-    //   undoBuffers.set(docId, []);
-    // }
-
-    socket.emit("load-strokes", {
-      savedStrokes: strokeBuffers.get(docId) || [],
-      accessRequired: false
-    });
-
-  });
-
-  socket.on("save", async (docId) => {
-
-    const strokes = strokeBuffers.get(docId) || [];
 
     try {
+      const projectId = roomId;
 
-      if (strokes.length === 0) {
-        io.to(docId).emit("saved", {
-          success: false,
-          message: "Nothing to save"
-        });
-        return;
+      if (!isValidObjectId(projectId)) {
+       return socket.emit("load-project", { project: null, error: "Invalid Project ID" });
       }
 
-      await Scriible.findByIdAndUpdate(
-        docId,
-        { $set: { strokes } },
-        { returnDocument: 'after' }
-      );
-      strokeDirty.set(docId, false); // reset dirty flag
-      console.log(`Saved ${strokes.length} strokes for Scriible ${docId}`);
+      if (!projectId) {
+        return socket.emit("load-project", { project: null, error: "Project ID is required" });
+      }
 
-      io.to(docId).emit("saved", { success: true });
+      const project = await Project.findById(projectId).populate({
+        path: "scene",
+        options: { sort: { createdAt: 1 } }
+      }).populate("participants", "_id name");
+
+      if (!project) {
+        return socket.emit("load-project", { project: null, error:"Project not found!" });
+      }
+
+      const isOwner = project.owner.equals(userId);
+      const isParticipant = project.participants.some(
+        (p) => p._id.toString() === userId
+      );
+
+      if (!isOwner && !isParticipant) {
+        return socket.emit("load-project", { project: null, accessRequired: true });
+      }
+
+      console.log({ project });
+
+      const users = Object.values(onlineUsers[roomId] || {});
+
+      const onlineSet = new Set(users.map((u) => u.userId));
+      const participants = project.participants.map((p) => ({
+        ...p.toObject(),
+        status: onlineSet.has(p._id.toString()) ? "online" : "offline"
+      }))
+      const projectToSend = {
+        ...project.toObject(),
+        participants
+      }
+      socket.emit("load-project", { project: projectToSend });
 
     } catch (error) {
-
-      console.error("Batch save error:", error);
-
-      io.to(docId).emit("saved", { success: false });
-
+      console.error("Error in getting vast project:", error);
     }
-
-  });
-
-  socket.on("draw", (data) => {
-
-    const { id } = data;
-
-    socket.to(id).emit("draw", data);
-
-    if (!strokeBuffers.has(id)) {
-      strokeBuffers.set(id, []);
-    }
-
-    if (!undoBuffers.has(id)) {
-      undoBuffers.set(id, []);
-    }
-
-    // const strokes = strokeBuffers.get(id);
-
-    // strokes.push([{
-    //   x0: data.x0,
-    //   y0: data.y0,
-    //   x1: data.x1,
-    //   y1: data.y1,
-    //   color: data.color,
-    //   size: data.size
-    // }]);
-
-
-    // add segment to last stroke if exists
-    const buffer = strokeBuffers.get(id);
-
-    if (buffer.length === 0 || !Array.isArray(buffer[buffer.length - 1])) {
-      // start a new stroke
-      buffer.push([{
-        x0: data.x0,
-        y0: data.y0,
-        x1: data.x1,
-        y1: data.y1,
-        color: data.color,
-        size: data.size
-      }]);
-    } else {
-      // append to last stroke
-      buffer[buffer.length - 1].push({
-        x0: data.x0,
-        y0: data.y0,
-        x1: data.x1,
-        y1: data.y1,
-        color: data.color,
-        size: data.size
-      });
-    }
-
-    // mark as dirty
-    strokeDirty.set(id, true);
-
-    // drawing clears redo
-    undoBuffers.set(id, []);
-
-  });
-
-  socket.on("undo", (roomId) => {
-
-    // const strokes = strokeBuffers.get(roomId);
-    // if (!strokes || strokes.length === 0) return;
-
-    // const removed = strokes.pop();
-
-    // if (!undoBuffers.has(roomId)) {
-    //   undoBuffers.set(roomId, []);
-    // }
-
-    // undoBuffers.get(roomId).push(removed);
-
-    // io.to(roomId).emit("undo", removed);
-
-
-    const buffer = strokeBuffers.get(roomId);
-    if (!buffer || buffer.length === 0) return;
-
-    const removed = buffer.pop();
-    if (!undoBuffers.has(roomId)) undoBuffers.set(roomId, []);
-    undoBuffers.get(roomId).push(removed);
-
-    io.to(roomId).emit("undo", removed);
-
 
 
   });
 
-  socket.on("redo", (roomId) => {
+  socket.on("add-element", async ({ userId, projectId, element }) => {
+    try {
 
-    // if (!undoBuffers.has(roomId)) return;
+      if (!projectId) {
+        res.status(400);
+        throw new Error("Project ID is required");
+      }
 
-    // const redoStack = undoBuffers.get(roomId);
+      const project = await Project.findById(projectId);
 
-    // if (redoStack.length === 0) return;
+      const isOwner = project.owner.equals(userId);
+      const isParticipant = project.participants.includes(userId);
 
-    // const stroke = redoStack.pop();
+      if (!isOwner && !isParticipant) {
+        res.status(403);
+        throw new Error("You don't have permission to edit this.");
+      }
 
-    // if (!strokeBuffers.has(roomId)) {
-    //   strokeBuffers.set(roomId, []);
-    // }
+      // 1️⃣ Create element document
+      const newElement = await Element.create({ ...element, projectId });
 
-    // strokeBuffers.get(roomId).push(stroke);
+      // 2️⃣ Store element id in scene
+      await Project.findByIdAndUpdate(
+        projectId,
+        { $push: { scene: newElement._id } }
+      );
 
-    // io.to(roomId).emit("redo", stroke);
+      console.log({
+        message: "Element added successfully",
+        element: newElement
+      })
 
-
-    if (!undoBuffers.has(roomId)) return;
-    const redoStack = undoBuffers.get(roomId);
-    if (redoStack.length === 0) return;
-
-    const stroke = redoStack.pop();
-    strokeBuffers.get(roomId).push(stroke);
-
-    io.to(roomId).emit("redo", stroke);
-
+    } catch (error) {
+      console.error("Incremental save error:", error);
+    }
+    socket.to(projectId).emit("element-added", { element, socketId: socket.id });
   });
 
-  socket.on("clear-canvas", async ({ id }) => {
+  socket.on("undo-element", async ({ userId, projectId }) => {
+    try {
 
-    socket.to(id).emit("clear-canvas");
+      if (!projectId) {
+        res.status(400);
+        throw new Error("Project ID is required");
+      }
+      const project = await Project.findById(projectId);
 
-    strokeBuffers.set(id, []);
+      const isOwner = project.owner.equals(userId);
+      const isParticipant = project.participants.includes(userId);
 
-    await Scriible.findByIdAndUpdate(id, {
-      $set: { strokes: [] }
-    });
+      if (!isOwner && !isParticipant) {
+        res.status(403);
+        throw new Error("You don't have permission to edit this.");
+      }
 
+      // Get last element ID
+      const lastElementId = project.scene[project.scene.length - 1];
+
+      if (!lastElementId) {
+        return res.status(400).json({ error: "No elements to undo" });
+      }
+
+      // Remove from project
+      await Project.findByIdAndUpdate(
+        projectId,
+        { $pop: { scene: 1 } }
+      );
+
+      // Delete element document
+      await Element.findByIdAndDelete(lastElementId);
+
+      console.log({ message: "Last element undone" });
+
+    } catch (error) {
+      console.error("Undo error:", error);
+
+    }
+    socket.to(projectId).emit("element-undone", { socketId: socket.id });
   });
 
   socket.on("disconnect", () => {
@@ -251,7 +202,7 @@ io.on("connection", (socket) => {
   });
 });
 
-*/
+
 
 
 const connectDB = async () => {
