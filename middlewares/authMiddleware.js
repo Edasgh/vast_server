@@ -18,7 +18,7 @@ const protect = async (req, res, next) => {
 
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-        req.user = await User.findById(decoded.id).select("-password").populate("scriibles", "name _id updatedAt").exec();
+        req.user = await User.findById(decoded.id).select("-password").populate("projects", "name _id createdAt updatedAt").exec();
 
         next();
 

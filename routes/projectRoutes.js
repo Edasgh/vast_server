@@ -1,4 +1,6 @@
 import express from "express";
+
+import async_handler from "express-async-handler";
 import Project from "../models/projectModel.js";
 import protect from "../middlewares/authMiddleware.js";
 import User from "../models/userModel.js";
@@ -9,7 +11,7 @@ const router = express.Router();
 // Increase limit for large canvas data/images
 router.use(express.json({ limit: '50mb' }));
 
-router.post("/create", protect, async (req, res) => {
+router.post("/create", protect, async_handler(async (req, res) => {
     try {
         const { name } = req.body;
         const userId = req.user._id;
@@ -37,9 +39,32 @@ router.post("/create", protect, async (req, res) => {
         console.error("Project creation Error:", error);
         res.status(500).json({ error: "Internal server error during project creation!" });
     }
-});
+}));
 
-router.get("/:id", protect, async (req, res) => {
+router.get("/", protect, async_handler(async (req, res) => {
+    try {
+        const userId = req.user._id;
+        const projects = await Project.find({
+            participants: { $in: [userId] }
+        }).populate({
+            path: "scene",
+            options: { sort: { createdAt: 1 } }
+        }).populate("participants","_id name");
+
+        if (!projects) {
+            res.status(404);
+            throw new Error("Projects not found!");
+        }
+
+        return res.status(200).json({ projects });
+
+    } catch (error) {
+        console.error("Error in getting vast projects:", error);
+        res.status(500).json({ error: "Failed to get vast projects!" });
+    }
+}));
+
+router.get("/:id", protect, async_handler(async (req, res) => {
     try {
         const projectId = req.params.id;
         const userId = req.user._id;
@@ -51,7 +76,7 @@ router.get("/:id", protect, async (req, res) => {
         const project = await Project.findById(projectId).populate({
             path: "scene",
             options: { sort: { createdAt: 1 } }
-        });
+        }).populate("participants","_id name");
 
         if (!project) {
             res.status(404);
@@ -72,10 +97,10 @@ router.get("/:id", protect, async (req, res) => {
         console.error("Error in getting vast project:", error);
         res.status(500).json({ error: "Failed to get vast project!" });
     }
-});
+}));
 
 // --- ROUTE 1: Metadata & Settings (Fast) ---
-router.patch('/:id/settings', protect, async (req, res) => {
+router.patch('/:id/settings', protect, async_handler(async (req, res) => {
     try {
         const { name, settings } = req.body;
         const projectId = req.params.id;
@@ -115,7 +140,7 @@ router.patch('/:id/settings', protect, async (req, res) => {
         console.error("Error in updating vast project settings : ", err);
         res.status(500).json({ error: "Failed to update settings" });
     }
-});
+}));
 
 
 // --- ROUTE 2: Scene & Elements (Heavy) ---
@@ -161,7 +186,7 @@ router.patch('/:id/settings', protect, async (req, res) => {
 // });
 
 // POST /api/projects/:id/elements
-router.post('/:id/elements', protect, async (req, res) => {
+router.post('/:id/elements', protect, async_handler(async (req, res) => {
     try {
         const { element } = req.body;
         const projectId = req.params.id;
@@ -200,10 +225,10 @@ router.post('/:id/elements', protect, async (req, res) => {
         console.error("Incremental save error:", error);
         res.status(500).json({ error: "Failed to save element" });
     }
-});
+}));
 
 // DELETE /api/projects/:id/elements/last
-router.delete('/:id/elements/last', protect, async (req, res) => {
+router.delete('/:id/elements/last', protect, async_handler(async (req, res) => {
     try {
         const projectId = req.params.id;
 
@@ -245,7 +270,7 @@ router.delete('/:id/elements/last', protect, async (req, res) => {
         console.error("Undo error:", error);
         res.status(500).json({ error: "Failed to undo element in DB" });
     }
-});
+}));
 
 
 
