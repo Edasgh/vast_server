@@ -189,6 +189,7 @@ io.on("connection", (socket) => {
 
       if (!isOwner) return;
       const roomNotifications = await AccessRequest.find({ projectId, reciever: userId.toString() });
+      if(!roomNotifications) return;
       io.to(userId.toString()).emit("get-requests", { requests: roomNotifications });
       console.log({ message: "Requests got successfully!" });
     } catch (error) {

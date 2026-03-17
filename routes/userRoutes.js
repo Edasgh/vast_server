@@ -6,6 +6,8 @@ import async_handler from "express-async-handler";
 import User from "../models/userModel.js";
 import bcrypt from "bcryptjs";
 import generateToken from "../utils/generateToken.js";
+import { sendOTP, verifyOTP } from "../controllers/otpControllers.js";
+import verifyResetToken from "../middlewares/verifyResetToken.js";
 
 
 //function to register user
@@ -48,7 +50,7 @@ const registerUser = async_handler(async (req, res) => {
 const loginUser = async_handler(async (req, res) => {
     const { email, password } = req.body;
 
-    const user = await User.findOne({ email }).populate("projects","_id name createdAt updatedAt");
+    const user = await User.findOne({ email }).populate("projects", "_id name createdAt updatedAt");
 
     if (user && (await user.matchPassword(password))) {
         generateToken(res, user._id);   // sets cookie
@@ -131,27 +133,26 @@ const updateUser = async_handler(async (req, res) => {
 //function to change password || for logged in user
 const changePassword = async_handler(async (req, res) => {
     try {
-        const { password } = req.body;
+        const { oldPassword, password } = req.body;
         const userId = req.user._id;
         const user = await User.findById(userId);
-        if (user) {
+        if (user && (await user.matchPassword(oldPassword))) {
             const salt = await bcrypt.genSalt(10);
             let newPassword = await bcrypt.hash(password, salt);
             let userPassword = await User.findByIdAndUpdate(
                 { _id: userId },
-                { password: newPassword },
-                { new: true }
+                { password: newPassword }
             );
             if (userPassword) {
                 res.status(201).send({ message: "Password changed successfully!" });
             }
         } else {
             res.status(401);
-            throw new Error("Can't change password");
+            throw new Error("Failed to change password!");
         }
     } catch (error) {
-        res.status(401);
-        throw new Error("Can't change password");
+        res.status(401)
+        throw new Error(error.message);
     }
 });
 
@@ -166,10 +167,11 @@ const forgotPassword = async_handler(async (req, res) => {
             let newPassword = await bcrypt.hash(password, salt);
             let userPassword = await User.findByIdAndUpdate(
                 userId,
-                { password: newPassword },
-                { new: true }
+                { password: newPassword }
             );
             if (userPassword) {
+                // clear token after use
+                res.clearCookie("resetToken");
                 res.status(201).send({ message: "Password changed successfully!" });
             }
         } else {
@@ -178,7 +180,7 @@ const forgotPassword = async_handler(async (req, res) => {
         }
     } catch (error) {
         res.status(401);
-        throw new Error("Can't change password");
+        throw new Error(error.message);
     }
 });
 
@@ -190,78 +192,9 @@ router.post("/logout", protect, logoutUser)
 router.get("/", protect, getUser);
 router.put("/edit_details", protect, updateUser);
 router.put("/change_password", protect, changePassword);
-
-
-
-
-/*
-const verifyOTP = async (email, otp) => {
-  try {
-    const response = await fetch("/api/verify-otp", {
-  method: "POST",
-  credentials: "include",
-  headers: {
-    "Content-Type": "application/json"
-  },
-  body: JSON.stringify({
-    email,
-    otp
-  })
-});
-
-// for axios
-axios.post(
-  "/api/verify-otp",
-  { email, otp },
-  { withCredentials: true }
-);
-
-
-
-    const data = await response.json();
-
-    if (response.ok) {
-      console.log("OTP Verified");
-
-      // store reset token temporarily
-      localStorage.setItem("resetToken", data.resetToken);
-
-    } else {
-      console.log(data.message);
-    }
-
-  } catch (error) {
-    console.error(error);
-  }
-};
-
-// example call
-verifyOTP("user@email.com", "123456");
-
-// frontend request
-const resetPassword = async (password) => {
-
-  const resetToken = localStorage.getItem("resetToken");
-
-  const response = await fetch("/api/forgot-password", {
-  method: "POST",
-  credentials: "include",
-  headers: {
-    "Content-Type": "application/json"
-  },
-  body: JSON.stringify({
-    password: newPassword
-  })
-});
-
-  const data = await response.json();
-
-  console.log(data);
-};
-
-resetPassword("newPassword123");
-
-*/
+router.post("/send_otp", sendOTP);
+router.post("/verify_email", verifyOTP);
+router.post("/reset_password", verifyResetToken, forgotPassword);
 
 
 export default router;
