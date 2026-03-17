@@ -49,7 +49,7 @@ router.get("/", protect, async_handler(async (req, res) => {
         }).populate({
             path: "scene",
             options: { sort: { createdAt: 1 } }
-        }).populate("participants","_id name");
+        }).populate("participants", "_id name");
 
         if (!projects) {
             res.status(404);
@@ -76,7 +76,7 @@ router.get("/:id", protect, async_handler(async (req, res) => {
         const project = await Project.findById(projectId).populate({
             path: "scene",
             options: { sort: { createdAt: 1 } }
-        }).populate("participants","_id name");
+        }).populate("participants", "_id name");
 
         if (!project) {
             res.status(404);
@@ -199,10 +199,10 @@ router.post('/:id/elements', protect, async_handler(async (req, res) => {
         const userId = req.user._id;
         const project = await Project.findById(projectId);
 
-        const isOwner = project.owner.equals(userId);
+        // const isOwner = project.owner.equals(userId);
         const isParticipant = project.participants.includes(userId);
 
-        if (!isOwner && !isParticipant) {
+        if (!isParticipant) {
             res.status(403);
             throw new Error("You don't have permission to edit this.");
         }
@@ -240,10 +240,10 @@ router.delete('/:id/elements/last', protect, async_handler(async (req, res) => {
         const userId = req.user._id;
         const project = await Project.findById(projectId);
 
-        const isOwner = project.owner.equals(userId);
+        // const isOwner = project.owner.equals(userId);
         const isParticipant = project.participants.includes(userId);
 
-        if (!isOwner && !isParticipant) {
+        if (!isParticipant) {
             res.status(403);
             throw new Error("You don't have permission to edit this.");
         }
