@@ -9,6 +9,11 @@ const AccessRequestSchema = new mongoose.Schema({
 },
     { timestamps: true });
 
+// 🔥 delete notifications after 10 days
+AccessRequestSchema.index(
+    { createdAt: 1 },
+    { expireAfterSeconds: 60 * 60 * 24 * 10 }
+);
 
 const AccessRequest = mongoose.models.AccessRequest ?? mongoose.model("AccessRequest", AccessRequestSchema);
 
