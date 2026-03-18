@@ -49,7 +49,7 @@ const onlineUsers = {}
 
 
 // POST /api/request-access
-export const sendAccessRequest = async (req, res) => {
+const sendAccessRequest = async (req, res) => {
   try {
     const userId = req.user._id;
     const { message, projectId } = req.body;
@@ -110,11 +110,29 @@ const getNotifications = async (req, res) => {
   }
 };
 
+const getAdminNotifications = async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    const notifications = await AccessRequest.find({
+      reciever: userId, // user who should receive notif
+      status: 'pending' // admin will accept or reject requests
+    })
+      .populate("projectId")
+      .sort({ updatedAt: -1 });
+
+    return res.status(200).json({ notifications });
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+};
+
 app.use(cookieParser());
 app.use("/api/auth", userRoutes);
 app.use("/api/projects", projectRoutes);
 app.post("/api/request-access", protect, sendAccessRequest);
 app.get("/api/get-notifs", protect, getNotifications);
+app.get("/api/get_admin_notifs", protect, getAdminNotifications);
 
 
 io.on("connection", (socket) => {
@@ -189,7 +207,7 @@ io.on("connection", (socket) => {
 
       if (!isOwner) return;
       const roomNotifications = await AccessRequest.find({ projectId, reciever: userId.toString() });
-      if(!roomNotifications) return;
+      if (!roomNotifications) return;
       io.to(userId.toString()).emit("get-requests", { requests: roomNotifications });
       console.log({ message: "Requests got successfully!" });
     } catch (error) {
