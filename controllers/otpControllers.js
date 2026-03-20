@@ -1,5 +1,5 @@
 import async_handler from "express-async-handler";
-import otpGenerator from "otp-generator";
+import crypto from "crypto";
 import sendEmail from "../utils/sendEmail.js";
 import User from "../models/userModel.js";
 import OTP from "../models/otpModel.js";
@@ -25,7 +25,7 @@ const sendOTP = async_handler(async (req, res) => {
 
         const otpExists = await OTP.findOne({ email });
         if (otpExists) {
-            const timeDiff = Date.now() - existingOTP.createdAt.getTime();
+            const timeDiff = Date.now() - otpExists.createdAt.getTime();
 
             if (timeDiff < COOLDOWN_TIME) {
                 return res.status(429).json({
@@ -35,11 +35,15 @@ const sendOTP = async_handler(async (req, res) => {
             await OTP.deleteMany({ email });
         }
 
-        const otp = otpGenerator.generate(6, {
-            digits: true,
-            upperCase: false,
-            specialChars: false
-        });
+        // const otp = otpGenerator.generate(6, {
+        //     digits: true,
+        //     lowerCase: false,    // Added: Disables lowercase letters
+        //     upperCase: false,
+        //     specialChars: false,
+        //     alphabets: false
+        // });
+
+        const otp = crypto.randomInt(100000, 999999).toString();
 
         const otpDoc = await OTP.create({ otp, email });
 
