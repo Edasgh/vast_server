@@ -23,12 +23,21 @@ router.post("/create", protect, async_handler(async (req, res) => {
         }
 
         const newProject = await Project.create({ name, owner: userId, participants: [userId] });
+
         if (newProject) {
-            return res.status(201).json({
-                _id: newProject._id,
-                name: newProject.name,
-                success: true,
-            });
+            const updatedUser = await User.findByIdAndUpdate(userId,
+                { $push: { projects: newProject._id } }
+            )
+            if (updatedUser) {
+                return res.status(201).json({
+                    _id: newProject._id,
+                    name: newProject.name,
+                    success: true,
+                });
+            } else {
+                res.status(401);
+                throw new Error("Unauthorized");
+            }
         } else {
             res.status(400);
             throw new Error("Project creation failed!");

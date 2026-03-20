@@ -125,7 +125,7 @@ const updateUser = async_handler(async (req, res) => {
         }
     } catch (error) {
         res.status(401);
-        throw new Error("Can't view user details");
+        throw new Error("Can't update user details");
     }
 });
 
@@ -195,6 +195,32 @@ router.put("/change_password", protect, changePassword);
 router.post("/send_otp", sendOTP);
 router.post("/verify_email", verifyOTP);
 router.post("/reset_password", verifyResetToken, forgotPassword);
+router.patch("/update_dp", protect, async_handler(async (req, res) => {
+    try {
+        const { imageUrl, dpStorageId } = req.body;
+
+        const userId = req.user._id;
+
+        const updatedUser = await User.findByIdAndUpdate(userId, {
+            dpUrl: imageUrl,
+            dpStorageId
+        }, {
+            returnDocument: 'after',
+            populate: {
+                path: "projects",
+                select: "name _id createdAt updatedAt"
+            }
+        });
+        if (updatedUser) {
+            res.status(201).send(updatedUser);
+        } else {
+            throw new Error("User not found!")
+        }
+    } catch (error) {
+        res.status(401).send({ message: error.message })
+
+    }
+}))
 
 
 export default router;

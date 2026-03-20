@@ -13,7 +13,9 @@ const userModel = mongoose.Schema(
         ],
         password: { type: String, required: true, minlength: 8 },
         isAdmin: { type: Boolean, default: false },
-        dpUrl: { type: String, default:"https://img.daisyui.com/images/profile/demo/yellingcat@192.webp"}
+        dpUrl: { type: String, default:"https://img.daisyui.com/images/profile/demo/yellingcat@192.webp"},
+        dpStorageId: { type: String, default:"-1"}
+
     },
     { timestamps: true }
 );

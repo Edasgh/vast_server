@@ -90,6 +90,7 @@ const sendAccessRequest = async (req, res) => {
     return res.status(201).json({ success: true, request });
 
   } catch (err) {
+    // console.log("Error in sending request : ",err);
     res.status(500).json({ message: err.message });
   }
 };
@@ -133,6 +134,8 @@ app.use("/api/projects", projectRoutes);
 app.post("/api/request-access", protect, sendAccessRequest);
 app.get("/api/get-notifs", protect, getNotifications);
 app.get("/api/get_admin_notifs", protect, getAdminNotifications);
+
+
 
 
 io.on("connection", (socket) => {
@@ -188,25 +191,26 @@ io.on("connection", (socket) => {
         return socket.emit("load-project", { project: null, accessRequired: true });
       }
 
-      const users = Object.values(onlineUsers[roomId] || {});
+      // Optimization: Pre-calculate online IDs to avoid multiple loops
+      const onlineUserIds = new Set(Object.values(onlineUsers[roomId]).map(u => u.userId));
 
-      const onlineSet = new Set(users.map((u) => u.userId));
-      const participants = project.participants.map((p) => ({
+      const participantsWithStatus = project.participants.map(p => ({
         ...p.toObject(),
-        status: onlineSet.has(p._id.toString()) ? "online" : "offline"
-      }))
+        status: onlineUserIds.has(p._id.toString()) ? "online" : "offline"
+      }));
       const projectToSend = {
         ...project.toObject(),
-        participants
+        participants: participantsWithStatus
       }
 
 
       socket.emit("load-project", { project: projectToSend });
       console.log({ message: "Project sent successfully!" });
+      socket.to(roomId).emit("updated_participants", { participants: participantsWithStatus })
 
 
       if (!isOwner) return;
-      const roomNotifications = await AccessRequest.find({ projectId, reciever: userId.toString() });
+      const roomNotifications = await AccessRequest.find({ projectId, receiver: userId.toString(), status: 'pending' }).populate("sender").populate("projectId");
       if (!roomNotifications) return;
       io.to(userId.toString()).emit("get-requests", { requests: roomNotifications });
       console.log({ message: "Requests got successfully!" });
@@ -317,14 +321,33 @@ io.on("connection", (socket) => {
         throw new Error("Request not found");
       }
 
-      await Project.findByIdAndUpdate(projectId,
-        { $addToSet: { participants: res.sender._id } }
+      const updatedProject = await Project.findByIdAndUpdate(projectId,
+        { $addToSet: { participants: res.sender._id }, }, { returnDocument: 'after' }
       );
+
+      await User.findByIdAndUpdate(res.sender._id,
+        { $push: { projects: projectId } }
+      )
 
       io.to(res.sender._id.toString()).emit("get-notif", {
         request: res,
         accepted: true,
       });
+
+      // A. Notify the SENDER (Personal Room)
+      // This tells the person who asked for access: "You're in! Reload now."
+      io.to(res.sender._id.toString()).emit("force-project-reload", { projectId });
+
+      // Optimization: Pre-calculate online IDs to avoid multiple loops
+      const onlineUserIds = new Set(Object.values(onlineUsers[roomId]).map(u => u.userId));
+
+      const participantsWithStatus = updatedProject.participants.map(p => ({
+        ...p.toObject(),
+        status: onlineUserIds.has(p._id.toString()) ? "online" : "offline"
+      }));
+
+      socket.emit("updated_participants", { participants: participantsWithStatus })
+
     } catch (error) {
       console.error("Error while accepting request : ", error);
     }
@@ -365,17 +388,53 @@ io.on("connection", (socket) => {
     }
   });
 
+  // Helper function to keep your code DRY (Don't Repeat Yourself)
+  const broadcastUpdatedParticipants = async (roomId) => {
+    try {
+      const project = await Project.findById(roomId).populate("participants", "_id name");
+      if (!project) return;
+
+      const onlineUserIds = new Set(
+        Object.values(onlineUsers[roomId] || {}).map(u => u.userId)
+      );
+
+      const participantsWithStatus = project.participants.map(p => ({
+        ...p.toObject(),
+        status: onlineUserIds.has(p._id.toString()) ? "online" : "offline"
+      }));
+
+      // Send the fresh list to everyone still in the room
+      io.to(roomId).emit("updated_participants", { participants: participantsWithStatus });
+    } catch (err) {
+      console.error("Error broadcasting disconnect update:", err);
+    }
+  };
+
   socket.on("disconnect", () => {
-    Object.keys(onlineUsers).forEach((roomId) => {
+    // 1. Find all rooms this specific socket was active in
+    const roomsUserWasIn = Object.keys(onlineUsers).filter(roomId =>
+      onlineUsers[roomId][socket.id]
+    );
+
+    roomsUserWasIn.forEach((roomId) => {
+      // 2. Remove the user from the state
       delete onlineUsers[roomId][socket.id];
 
-      // optional: cleanup empty rooms
-      if (Object.keys(onlineUsers[roomId]).length === 0) {
+      // 3. Check if the room still has people
+      const remainingSocketIds = Object.keys(onlineUsers[roomId]);
+
+      if (remainingSocketIds.length === 0) {
         delete onlineUsers[roomId];
+      } else {
+        // 4. Trigger the update for the remaining participants
+        broadcastUpdatedParticipants(roomId);
       }
     });
-    console.log("User disconnected:", socket.id);
+
+    console.log("User disconnected and rooms updated:", socket.id);
   });
+
+
 });
 
 
