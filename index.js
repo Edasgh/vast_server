@@ -221,6 +221,38 @@ io.on("connection", (socket) => {
 
   });
 
+  socket.on("clear-canvas", async ({ userId, projectId }) => {
+    try {
+      if (!projectId) {
+        throw new Error("Project ID is required");
+      }
+
+      const project = await Project.findById(projectId);
+
+      // const isOwner = project.owner.equals(userId);
+      const isParticipant = project.participants.includes(userId);
+
+      if (!isParticipant) {
+        throw new Error("You don't have permission to edit this.");
+      }
+
+      // 1. Delete all elements belonging to this project
+      await Element.deleteMany({ projectId: projectId });
+
+      // 2. Clear the 'scene' array in the Project document
+      await Project.findByIdAndUpdate(projectId, {
+        $set: { scene: [] }
+      });
+      // 3. Broadcast to EVERYONE in the room (including sender)
+      // to reset their local React state
+      io.to(projectId).emit("force-project-reload", { projectId });
+
+      console.log(`Project ${projectId} cleared by  User ${userId}`);
+    } catch (err) {
+      console.error("Error clearing canvas:", err);
+    }
+  })
+
   socket.on("add-element", async ({ userId, projectId, element }) => {
     try {
 
@@ -230,8 +262,14 @@ io.on("connection", (socket) => {
 
       const project = await Project.findById(projectId);
 
-      // const isOwner = project.owner.equals(userId);
-      const isParticipant = project.participants.includes(userId);
+      if (!project) {
+        throw new Error("Project not found!");
+      }
+
+      const isParticipant = project.participants.some(
+        (p) => p.toString() === userId.toString()
+      );
+
 
       if (!isParticipant) {
         throw new Error("You don't have permission to edit this.");
@@ -246,14 +284,65 @@ io.on("connection", (socket) => {
         { $push: { scene: newElement._id } }
       );
 
+      socket.broadcast.to(projectId).emit("element-added", { element: newElement, socketId: socket.id });
+
+
       console.log({
         message: "Element added successfully",
       })
 
+
     } catch (error) {
       console.error("Incremental save error:", error);
     }
-    socket.to(projectId).emit("element-added", { element, socketId: socket.id });
+
+  });
+
+  socket.on("update-element", async ({ userId, projectId, elementId, fillColor }) => {
+    try {
+
+      if (!projectId) {
+        throw new Error("Project ID is required");
+      }
+
+      const project = await Project.findById(projectId);
+      if (!project) {
+        throw new Error("Project not found!");
+      }
+
+      const isParticipant = project.participants.some(
+        (p) => p.toString() === userId.toString()
+      );
+
+      if (!isParticipant) {
+        throw new Error("You don't have permission to edit this.");
+      }
+
+      // 1️⃣ update element document
+      const updatedElement = await Element.findByIdAndUpdate(elementId, {
+        fillColor
+      }, {
+        returnDocument: 'after'
+      });
+
+      if (!updatedElement) {
+        throw new Error("Element not found");
+      }
+
+      console.log({
+        message: "Element updated successfully",
+      })
+
+
+      socket.to(projectId).emit("element-updated", {
+        element: updatedElement,
+        socketId: socket.id,
+      });
+
+    } catch (err) {
+      console.error("Element update error:", err);
+    }
+
   });
 
   socket.on("undo-element", async ({ userId, projectId }) => {
