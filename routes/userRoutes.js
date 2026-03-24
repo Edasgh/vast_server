@@ -4,10 +4,12 @@ import protect from "../middlewares/authMiddleware.js";
 
 import async_handler from "express-async-handler";
 import User from "../models/userModel.js";
+import Project from "../models/projectModel.js";
 import bcrypt from "bcryptjs";
 import generateToken from "../utils/generateToken.js";
 import { sendOTP, verifyOTP } from "../controllers/otpControllers.js";
 import verifyResetToken from "../middlewares/verifyResetToken.js";
+import { io } from "../index.js";
 
 
 //function to register user
@@ -34,6 +36,8 @@ const registerUser = async_handler(async (req, res) => {
     });
 
     if (newUser) {
+        // emit update
+        io.to("admin-room").emit("admin:stats:update");
         res.status(201).json({
             _id: newUser._id,
             name: newUser.name,
@@ -121,6 +125,7 @@ const updateUser = async_handler(async (req, res) => {
                     }
                 }
             )
+            io.to("admin-room").emit("admin:stats:update");
             res.status(201).send(updatedUser);
         }
     } catch (error) {
@@ -144,6 +149,7 @@ const changePassword = async_handler(async (req, res) => {
                 { password: newPassword }
             );
             if (userPassword) {
+                io.to("admin-room").emit("admin:stats:update");
                 res.status(201).send({ message: "Password changed successfully!" });
             }
         } else {
@@ -172,15 +178,14 @@ const forgotPassword = async_handler(async (req, res) => {
             if (userPassword) {
                 // clear token after use
                 res.clearCookie("resetToken");
-                res.status(201).send({ message: "Password changed successfully!" });
+                return res.status(201).send({ message: "Password changed successfully!" });
             }
         } else {
             res.status(401);
             throw new Error("Can't find User!");
         }
     } catch (error) {
-        res.status(401);
-        throw new Error(error.message);
+       return res.status(401).send({message:error.message})
     }
 });
 
@@ -190,6 +195,208 @@ router.post("/signup", registerUser)
 router.post("/login", loginUser)
 router.post("/logout", protect, logoutUser)
 router.get("/", protect, getUser);
+router.get("/admin/admin_data", protect, async_handler(async (req, res) => {
+    try {
+        const userId = req.user._id;
+        const user = await User.findById(userId).select("-password");
+        if (!user || !user?.isAdmin) {
+            return res.status(401).send({ message: "Unauthorized!" });
+        }
+
+        // =========================
+        // DATE HELPERS
+        // =========================
+        const last7Days = new Date();
+        last7Days.setDate(last7Days.getDate() - 7);
+
+        const last30Days = new Date();
+        last30Days.setDate(last30Days.getDate() - 30);
+
+        const allUsersPromise = User.find({}).populate("projects");
+
+        const allProjectsPromise = Project.find({}).populate("participants").populate("owner");
+
+
+
+        // =========================
+        // ACTIVE USERS (last 7 days)
+        // =========================
+
+        const activeUsersPromise = User.countDocuments({
+            updatedAt: { $gte: last7Days }
+        });
+
+        // =========================
+        // INACTIVE USERS (last 30 days) 
+        // =========================
+        const inactiveUsersPromise = User.countDocuments({
+            updatedAt: { $lt: last30Days }
+        });
+
+        // =========================
+        // AVG ELEMENTS PER PROJECT
+        // =========================
+        const avgElementsPromise = Project.aggregate([
+            {
+                $project: {
+                    elementCount: { $size: "$scene" }
+                }
+            },
+            {
+                $group: {
+                    _id: null,
+                    avg: { $avg: "$elementCount" }
+                }
+            }
+        ]);
+
+        // =========================
+        // COLLABORATION STATS 
+        // =========================
+        const collaborationStatsPromise = Project.aggregate([
+            {
+                $project: {
+                    participantsCount: { $size: "$participants" }
+                }
+            },
+            {
+                $group: {
+                    _id: null,
+                    avgParticipants: { $avg: "$participantsCount" }
+                }
+            }
+        ]);
+
+
+        // =========================
+        // TOP USERS (by projects)
+        // =========================
+        const topUsersPromise = User.aggregate([
+            {
+                $project: {
+                    name: 1,
+                    email: 1,
+                    dpUrl: 1,
+                    projectCount: { $size: "$projects" }
+                }
+            },
+            { $sort: { projectCount: -1 } },
+            { $limit: 5 }
+        ]);
+
+        // =========================
+        // HEAVY PROJECTS (by elements)
+        // =========================
+        const heavyProjectsPromise = Project.aggregate([
+            {
+                $project: {
+                    name: 1,
+                    elementCount: { $size: "$scene" },
+                    participantsCount: { $size: "$participants" }
+                }
+            },
+            { $sort: { elementCount: -1 } },
+            { $limit: 5 }
+        ]);
+
+        // =========================
+        // USER GROWTH (last 30 days) 
+        // =========================
+        const userGrowthPromise = User.aggregate([
+            {
+                $match: { createdAt: { $gte: last30Days } }
+            },
+            {
+                $group: {
+                    _id: {
+                        $dateToString: {
+                            format: "%Y-%m-%d",
+                            date: "$createdAt"
+                        }
+                    },
+                    count: { $sum: 1 }
+                }
+            },
+            { $sort: { _id: 1 } }
+        ]);
+
+        // =========================
+        // PROJECT GROWTH (last 30 days) 
+        // =========================
+        const projectGrowthPromise = Project.aggregate([
+            {
+                $match: { createdAt: { $gte: last30Days } }
+            },
+            {
+                $group: {
+                    _id: {
+                        $dateToString: {
+                            format: "%Y-%m-%d",
+                            date: "$createdAt"
+                        }
+                    },
+                    count: { $sum: 1 }
+                }
+            },
+            { $sort: { _id: 1 } }
+        ]);
+
+
+        // =========================
+        // RUN IN PARALLEL
+        // =========================
+        const [
+            allUsers,
+            allProjects,
+            activeUsers,
+            inactiveUsers,
+            avgElementsResult,
+            collaborationStats,
+            topUsers,
+            heavyProjects,
+            userGrowth,
+            projectGrowth
+        ] = await Promise.all([
+            allUsersPromise,
+            allProjectsPromise,
+            activeUsersPromise,
+            inactiveUsersPromise,
+            avgElementsPromise,
+            collaborationStatsPromise,
+            topUsersPromise,
+            heavyProjectsPromise,
+            userGrowthPromise,
+            projectGrowthPromise
+        ]);
+
+        return res.status(200).json({
+            allUsers,
+            allProjects,
+
+            // Core stats
+            activeUsers,
+            inactiveUsers,
+
+            avgElements: avgElementsResult[0]?.avg || 0,
+            avgParticipants: collaborationStats[0]?.avgParticipants || 0,
+
+            // Insights
+            topUsers,
+            heavyProjects,
+
+            // Growth
+            userGrowth,
+            projectGrowth
+        });
+
+    } catch (err) {
+        console.log("Error while getting admin dashboard data:", err);
+        return res.status(500).send({ message: err.message });
+    }
+})
+);
+
+
 router.put("/edit_details", protect, updateUser);
 router.put("/change_password", protect, changePassword);
 router.post("/send_otp", sendOTP);
@@ -221,6 +428,71 @@ router.patch("/update_dp", protect, async_handler(async (req, res) => {
 
     }
 }))
+
+// delete a specific user
+router.delete(
+    "/:id",
+    protect,
+    async_handler(async (req, res) => {
+        try {
+            const deluserId = req.params.id;
+            const userId = req.user._id;
+
+            if (!deluserId) {
+                return res.status(400).json({ message: "User Id is required!" });
+            }
+
+            const userExists = await User.findById(deluserId);
+
+            if (!userExists) {
+                return res.status(404).json({ message: "User not found!" });
+            }
+
+            // 🔐 Authorization: owner OR admin
+            const user = await User.findById(userId);
+
+            if (!user || !user?.isAdmin) {
+                return res.status(403).json({ message: "Unauthorized!" });
+            }
+
+
+            //  Delete User
+            await User.findByIdAndDelete(deluserId);
+
+            //  Remove user from all projects
+            await Project.updateMany(
+                { participants: { $in: [deluserId] } },
+                { $pull: { participants: deluserId } }
+            );
+            // Handle owned projects
+            const ownedProjects = await Project.find({ owner: deluserId });
+
+            for (const project of ownedProjects) {
+                if (project.participants.length > 0) {
+                    const newOwner = project.participants[0];
+
+                    await Project.findByIdAndUpdate(project._id, {
+                        owner: newOwner,
+                        $pull: { participants: newOwner },
+                    });
+
+                } else {
+                    await Project.findByIdAndDelete(project._id);
+                }
+            }
+
+            io.to("admin-room").emit("admin:stats:update");
+            return res.status(200).json({
+                message: "User deleted successfully",
+                deluserId,
+            });
+
+        } catch (err) {
+            console.log("Error while deleting user :", err);
+            return res.status(500).json({ message: err.message });
+        }
+    })
+);
 
 
 export default router;

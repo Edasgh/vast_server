@@ -5,12 +5,14 @@ import Project from "../models/projectModel.js";
 import protect from "../middlewares/authMiddleware.js";
 import User from "../models/userModel.js";
 import Element from "../models/elementModel.js";
+import { io } from "../index.js";
 
 const router = express.Router();
 
 // Increase limit for large canvas data/images
 router.use(express.json({ limit: '50mb' }));
 
+// create a project
 router.post("/create", protect, async_handler(async (req, res) => {
     try {
         const { name } = req.body;
@@ -29,6 +31,8 @@ router.post("/create", protect, async_handler(async (req, res) => {
                 { $push: { projects: newProject._id } }
             )
             if (updatedUser) {
+                // emit update
+                io.to("admin-room").emit("admin:stats:update");
                 return res.status(201).json({
                     _id: newProject._id,
                     name: newProject.name,
@@ -50,6 +54,7 @@ router.post("/create", protect, async_handler(async (req, res) => {
     }
 }));
 
+// get all projects for a particular user
 router.get("/", protect, async_handler(async (req, res) => {
     try {
         const userId = req.user._id;
@@ -73,6 +78,7 @@ router.get("/", protect, async_handler(async (req, res) => {
     }
 }));
 
+// get a specific project
 router.get("/:id", protect, async_handler(async (req, res) => {
     try {
         const projectId = req.params.id;
@@ -108,7 +114,7 @@ router.get("/:id", protect, async_handler(async (req, res) => {
     }
 }));
 
-// --- ROUTE 1: Metadata & Settings (Fast) ---
+// --- Update Metadata & Settings (Fast) ---
 router.patch('/:id/settings', protect, async_handler(async (req, res) => {
     try {
         const { name, settings } = req.body;
@@ -152,134 +158,60 @@ router.patch('/:id/settings', protect, async_handler(async (req, res) => {
 }));
 
 
-// --- ROUTE 2: Scene & Elements (Heavy) ---
-// router.patch('/:id/scene', protect, async (req, res) => {
-//     try {
-//         const { scene } = req.body;
-//         const projectId = req.params.id;
+// delete a specific project
+router.delete(
+    "/:id",
+    protect,
+    async_handler(async (req, res) => {
+        try {
+            const projectId = req.params.id;
+            const userId = req.user._id;
 
-//         // Validation
-//         if (!projectId) {
-//             res.status(400);
-//             throw new Error("Project ID is required")
-//         }
+            if (!projectId) {
+                return res.status(400).json({ message: "ProjectId is required!" });
+            }
 
-//         const userId = req.user._id; // we have auth middleware
-//         const project = await Project.findById(projectId);
+            const project = await Project.findById(projectId);
 
-//         const isOwner = project.owner.equals(userId);
-//         const isParticipant = project.participants.includes(userId);
+            if (!project) {
+                return res.status(404).json({ message: "Project not found!" });
+            }
 
-//         if (!isOwner && !isParticipant) {
-//             res.status(403);
-//             throw new Error("You don't have permission to edit this.")
-//         }
+            // 🔐 Authorization: owner OR admin
+            const user = await User.findById(userId);
 
+            const isOwner = project.owner.toString() === userId.toString();
 
-//         // We only update the scene array here
-//         const updatedProject = await Project.findByIdAndUpdate(
-//             projectId,
-//             { $set: { scene } }
-//         );
+            if (!isOwner && !user.isAdmin) {
+                return res.status(403).json({ message: "Unauthorized!" });
+            }
 
-//         if (!updatedProject) {
-//             res.status(404);
-//             throw new Error("Project not found")
-//         }
+            //  Delete project
+            await Project.findByIdAndDelete(projectId);
 
-//         res.status(200).json({ message: "Scene saved" });
-//     } catch (err) {
-//         console.error("Error in saving scene : ", err);
-//         res.status(500).json({ error: "Failed to save scene" });
-//     }
-// });
+            //Delete all elements
+            await Element.deleteMany({ projectId });
 
-// POST /api/projects/:id/elements
-router.post('/:id/elements', protect, async_handler(async (req, res) => {
-    try {
-        const { element } = req.body;
-        const projectId = req.params.id;
+            //  Remove project from all users
+            await User.updateMany(
+                { projects: { $in: [projectId] } },
+                { $pull: { projects: projectId } }
+            );
 
-        if (!projectId) {
-            res.status(400);
-            throw new Error("Project ID is required");
+            io.to("admin-room").emit("admin:stats:update");
+            return res.status(200).json({
+                message: "Project deleted successfully",
+                projectId,
+            });
+
+        } catch (err) {
+            console.log("Error while deleting project:", err);
+            return res.status(500).json({ message: err.message });
         }
+    })
+);
 
-        const userId = req.user._id;
-        const project = await Project.findById(projectId);
 
-        // const isOwner = project.owner.equals(userId);
-        const isParticipant = project.participants.includes(userId);
-
-        if (!isParticipant) {
-            res.status(403);
-            throw new Error("You don't have permission to edit this.");
-        }
-
-        // 1️⃣ Create element document
-        const newElement = await Element.create(element);
-
-        // 2️⃣ Store element id in scene
-        await Project.findByIdAndUpdate(
-            projectId,
-            { $push: { scene: newElement._id } }
-        );
-
-        res.status(201).json({
-            message: "Element added successfully",
-            element: newElement
-        });
-
-    } catch (error) {
-        console.error("Incremental save error:", error);
-        res.status(500).json({ error: "Failed to save element" });
-    }
-}));
-
-// DELETE /api/projects/:id/elements/last
-router.delete('/:id/elements/last', protect, async_handler(async (req, res) => {
-    try {
-        const projectId = req.params.id;
-
-        if (!projectId) {
-            res.status(400);
-            throw new Error("Project ID is required");
-        }
-
-        const userId = req.user._id;
-        const project = await Project.findById(projectId);
-
-        // const isOwner = project.owner.equals(userId);
-        const isParticipant = project.participants.includes(userId);
-
-        if (!isParticipant) {
-            res.status(403);
-            throw new Error("You don't have permission to edit this.");
-        }
-
-        // Get last element ID
-        const lastElementId = project.scene[project.scene.length - 1];
-
-        if (!lastElementId) {
-            return res.status(400).json({ error: "No elements to undo" });
-        }
-
-        // Remove from project
-        await Project.findByIdAndUpdate(
-            projectId,
-            { $pop: { scene: 1 } }
-        );
-
-        // Delete element document
-        await Element.findByIdAndDelete(lastElementId);
-
-        res.status(200).json({ message: "Last element undone" });
-
-    } catch (error) {
-        console.error("Undo error:", error);
-        res.status(500).json({ error: "Failed to undo element in DB" });
-    }
-}));
 
 
 

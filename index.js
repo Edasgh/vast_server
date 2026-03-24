@@ -38,6 +38,8 @@ const io = new Server(server, {
   },
 });
 
+export { io };
+
 const onlineUsers = {}
 // structure:
 // {
@@ -141,6 +143,11 @@ app.get("/api/get_admin_notifs", protect, getAdminNotifications);
 io.on("connection", (socket) => {
 
   console.log("A user connected:", socket.id);
+
+  socket.on("join_admin",()=>{
+    socket.join("admin-room");
+    io.to("admin-room").emit("admin:stats:update");
+  })
 
   socket.on("join-personal", ({ userId }) => {
     if (!userId) return;
@@ -547,4 +554,5 @@ server.listen(PORT, async () => {
   else
     console.log(`Server running on port : ${PORT}`);
 });
+
 

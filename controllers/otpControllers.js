@@ -50,13 +50,13 @@ const sendOTP = async_handler(async (req, res) => {
         const emailConfirmation = await sendEmail(user.name, email, otp);
 
         if (otpDoc && emailConfirmation) {
-            res.status(200).json({
+            return res.status(200).json({
                 message: "OTP generated!"
             });
         }
     } catch (error) {
-        res.status(500);
-        throw new Error(error.message);
+        return res.status(500).send({ message: error.message });
+
     }
 
 });
@@ -102,12 +102,12 @@ const verifyOTP = async_handler(async (req, res) => {
         // delete OTP after verification
         await OTP.deleteMany({ email });
 
-        res.status(200).json({
+       return res.status(200).json({
             message: "OTP verified",
         });
     } catch (error) {
-        res.status(500);
-        throw new Error(error.message);
+        return res.status(500).send({ message: error.message })
+
     }
 
 });
