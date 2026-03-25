@@ -144,7 +144,7 @@ io.on("connection", (socket) => {
 
   console.log("A user connected:", socket.id);
 
-  socket.on("join_admin",()=>{
+  socket.on("join_admin", () => {
     socket.join("admin-room");
     io.to("admin-room").emit("admin:stats:update");
   })
@@ -237,7 +237,9 @@ io.on("connection", (socket) => {
       const project = await Project.findById(projectId);
 
       // const isOwner = project.owner.equals(userId);
-      const isParticipant = project.participants.includes(userId);
+      const isParticipant = project.participants.some(
+        (p) => p.toString() === userId.toString()
+      );
 
       if (!isParticipant) {
         throw new Error("You don't have permission to edit this.");
@@ -253,6 +255,7 @@ io.on("connection", (socket) => {
       // 3. Broadcast to EVERYONE in the room (including sender)
       // to reset their local React state
       io.to(projectId).emit("force-project-reload", { projectId });
+      io.to("admin-room").emit("admin:stats:update");
 
       console.log(`Project ${projectId} cleared by  User ${userId}`);
     } catch (err) {
@@ -305,41 +308,37 @@ io.on("connection", (socket) => {
 
   });
 
-  socket.on("update-element", async ({ userId, projectId, elementId, fillColor }) => {
+  socket.on("update-element", async ({ userId, projectId, elementId, element }) => {
     try {
-
-      if (!projectId) {
-        throw new Error("Project ID is required");
+      if (!projectId || !elementId) {
+        throw new Error("Project ID and Element ID are required");
       }
 
       const project = await Project.findById(projectId);
-      if (!project) {
-        throw new Error("Project not found!");
-      }
+      if (!project) throw new Error("Project not found!");
 
       const isParticipant = project.participants.some(
         (p) => p.toString() === userId.toString()
       );
 
       if (!isParticipant) {
-        throw new Error("You don't have permission to edit this.");
+        throw new Error("No permission");
       }
 
-      // 1️⃣ update element document
-      const updatedElement = await Element.findByIdAndUpdate(elementId, {
-        fillColor
-      }, {
-        returnDocument: 'after'
-      });
+      const { _id, __v, createdAt, updatedAt, ...elementWithoutId } = element;
+
+      const updatedElement = await Element.findByIdAndUpdate(
+        elementId,
+        { $set: elementWithoutId },
+        { returnDocument: 'after' }
+      );
 
       if (!updatedElement) {
-        throw new Error("Element not found");
+        console.error("❌ Element not found in DB:", elementId);
+        return;
       }
 
-      console.log({
-        message: "Element updated successfully",
-      })
-
+      console.log({ message: "Element updated successfully!" });
 
       socket.to(projectId).emit("element-updated", {
         element: updatedElement,
@@ -349,7 +348,6 @@ io.on("connection", (socket) => {
     } catch (err) {
       console.error("Element update error:", err);
     }
-
   });
 
   socket.on("undo-element", async ({ userId, projectId }) => {
@@ -360,8 +358,10 @@ io.on("connection", (socket) => {
       }
       const project = await Project.findById(projectId);
 
-      // const isOwner = project.owner.equals(userId);
-      const isParticipant = project.participants.includes(userId);
+
+      const isParticipant = project.participants.some(
+        (p) => p.toString() === userId.toString()
+      );
 
       if (!isParticipant) {
         throw new Error("You don't have permission to edit this.");
@@ -390,6 +390,41 @@ io.on("connection", (socket) => {
 
     }
     socket.to(projectId).emit("element-undone", { socketId: socket.id });
+  });
+
+  socket.on("delete-element", async ({ userId, projectId, elementId }) => {
+    try {
+      if (!projectId || !elementId) return;
+
+      const project = await Project.findById(projectId);
+
+      const isParticipant = project.participants.some(
+        (p) => p.toString() === userId.toString()
+      );
+
+      if (!isParticipant) {
+        throw new Error("You don't have permission to edit this.");
+      }
+
+      // Remove from project
+      await Project.findByIdAndUpdate(
+        projectId,
+        { $pull: { scene: elementId } }
+      );
+
+      await Element.findByIdAndDelete(elementId)
+
+      
+      socket.to(projectId).emit("element-deleted", {
+        elementId,
+        socketId: socket.id,
+      });
+      
+      console.log({message:"Element deleted successfully!"});
+
+    } catch (err) {
+      console.error("Delete error:", err);
+    }
   });
 
   socket.on("accept-request", async ({ userId, message, requestId, projectId }) => {

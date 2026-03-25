@@ -177,6 +177,11 @@ router.delete(
                 return res.status(404).json({ message: "Project not found!" });
             }
 
+            // Get affected users BEFORE deletion
+            const usersWithProject = await User.find({
+                projects: { $in: [projectId] }
+            }).select("_id");
+
             // 🔐 Authorization: owner OR admin
             const user = await User.findById(userId);
 
@@ -199,6 +204,21 @@ router.delete(
             );
 
             io.to("admin-room").emit("admin:stats:update");
+            
+          
+
+            // Notify ALL affected users
+            usersWithProject.forEach((u) => {
+                io.to(u._id.toString()).emit("update-projects");
+            });
+
+            // console.log({
+            //     message: "Project deleted successfully",
+            //     projectId,
+            //     usersWithProject
+            // })
+
+
             return res.status(200).json({
                 message: "Project deleted successfully",
                 projectId,
