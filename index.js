@@ -285,8 +285,10 @@ io.on("connection", (socket) => {
         throw new Error("You don't have permission to edit this.");
       }
 
+      const { _tempId, ...elementWithoutId } = element;
+
       // 1️⃣ Create element document
-      const newElement = await Element.create({ ...element, projectId });
+      const newElement = await Element.create({ ...elementWithoutId, projectId });
 
       // 2️⃣ Store element id in scene
       await Project.findByIdAndUpdate(
@@ -294,7 +296,7 @@ io.on("connection", (socket) => {
         { $push: { scene: newElement._id } }
       );
 
-      socket.broadcast.to(projectId).emit("element-added", { element: newElement, socketId: socket.id });
+      io.to(projectId).emit("element-added", { element: newElement, socketId: socket.id, _tempId });
 
 
       console.log({
@@ -310,6 +312,8 @@ io.on("connection", (socket) => {
 
   socket.on("update-element", async ({ userId, projectId, elementId, element }) => {
     try {
+      // console.log("Project id : ",projectId);
+      // console.log("Element id : ",elementId);
       if (!projectId || !elementId) {
         throw new Error("Project ID and Element ID are required");
       }
@@ -414,13 +418,13 @@ io.on("connection", (socket) => {
 
       await Element.findByIdAndDelete(elementId)
 
-      
+
       socket.to(projectId).emit("element-deleted", {
         elementId,
         socketId: socket.id,
       });
-      
-      console.log({message:"Element deleted successfully!"});
+
+      console.log({ message: "Element deleted successfully!" });
 
     } catch (err) {
       console.error("Delete error:", err);
