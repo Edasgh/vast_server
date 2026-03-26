@@ -19,7 +19,7 @@ dotenv.config();
 
 const app = express();
 app.use(cors({
-  origin: process.env.CLIENT_BASE_URL || "http://localhost:5173", // frontend URL
+  origin: process.env.CLIENT_BASE_URL, // frontend URL
   credentials: true,
 }));
 app.use(express.json()); // ⭐ REQUIRED to parse JSON body
@@ -32,7 +32,7 @@ const PORT = process.env.PORT || 8080;
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: process.env.CLIENT_BASE_URL || "http://localhost:5173", // React app's URL
+    origin: process.env.CLIENT_BASE_URL, // React app's URL
     methods: ["GET", "POST"],
     credentials: true
   },
