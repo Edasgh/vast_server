@@ -24,11 +24,9 @@ app.use(cors({
 }));
 app.use(express.json()); // ⭐ REQUIRED to parse JSON body
 app.use(express.urlencoded({ extended: true }));
+
+// ✅ Create HTTP server and Socket.io
 const PORT = process.env.PORT || 8080;
-
-
-
-
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
@@ -576,25 +574,34 @@ io.on("connection", (socket) => {
 });
 
 
-const connectDB = async () => {
-  try {
-    const connection = await mongoose.connect(process.env.MONGO_URI);
-    if (connection) {
-      console.log(`Connected to database successfully!`);
+// const connectDB = async () => {
+//   try {
+//     const connection = await mongoose.connect(process.env.MONGO_URI);
+//     if (connection) {
+//       console.log(`Connected to database successfully!`);
+//     }
+//   } catch (error) {
+//     console.log(error.message);
+//     process.exit();
+//   }
+// };
+
+
+
+// ✅ Connect to MongoDB first, then start server
+const startServer = async () => {
+    try {
+        await mongoose.connect(process.env.MONGO_URI);
+        console.log("✅ MongoDB connected");
+
+        server.listen(PORT, () => {
+            console.log(`🚀 Server running on port ${PORT}`);
+        });
+    } catch (err) {
+        console.error("❌ Failed to connect to MongoDB:", err);
+        process.exit(1);
     }
-  } catch (error) {
-    console.log(error.message);
-    process.exit();
-  }
 };
 
-
-
-server.listen(PORT, async () => {
-  await connectDB();
-  if (process.env.NODE_ENV === "production") console.log(`Scriible server running`);
-  else
-    console.log(`Server running on port : ${PORT}`);
-});
-
+startServer();
 
