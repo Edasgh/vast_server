@@ -288,7 +288,7 @@ io.on("connection", (socket) => {
       const { _tempId, ...elementWithoutId } = element;
 
       // 1️⃣ Create element document
-      const newElement = await Element.create({ ...elementWithoutId, projectId,userId });
+      const newElement = await Element.create({ ...elementWithoutId, projectId, userId });
 
       // 2️⃣ Store element id in scene
       await Project.findByIdAndUpdate(
@@ -391,6 +391,8 @@ io.on("connection", (socket) => {
         elementId: lastElement._id,
         socketId: socket.id,
       });
+
+      console.log({ message: "Last element undone" })
 
     } catch (error) {
       console.error("Undo error:", error);
