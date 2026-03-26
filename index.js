@@ -288,7 +288,7 @@ io.on("connection", (socket) => {
       const { _tempId, ...elementWithoutId } = element;
 
       // 1️⃣ Create element document
-      const newElement = await Element.create({ ...elementWithoutId, projectId });
+      const newElement = await Element.create({ ...elementWithoutId, projectId,userId });
 
       // 2️⃣ Store element id in scene
       await Project.findByIdAndUpdate(
@@ -356,44 +356,45 @@ io.on("connection", (socket) => {
 
   socket.on("undo-element", async ({ userId, projectId }) => {
     try {
-
-      if (!projectId) {
-        throw new Error("Project ID is required");
-      }
       const project = await Project.findById(projectId);
 
+      if (!project) throw new Error("Project not found");
 
       const isParticipant = project.participants.some(
         (p) => p.toString() === userId.toString()
       );
 
       if (!isParticipant) {
-        throw new Error("You don't have permission to edit this.");
+        throw new Error("No permission");
       }
 
-      // Get last element ID
-      const lastElementId = project.scene[project.scene.length - 1];
-
-      if (!lastElementId) {
-        throw new Error("No elements to undo")
-      }
-
-      // Remove from project
-      await Project.findByIdAndUpdate(
+      // ✅ Find LAST element created by THIS USER
+      const lastElement = await Element.findOne({
         projectId,
-        { $pop: { scene: 1 } }
-      );
+        userId,
+      }).sort({ createdAt: -1 });
 
-      // Delete element document
-      await Element.findByIdAndDelete(lastElementId);
+      if (!lastElement) {
+        throw new Error("No elements to undo");
+      }
 
-      console.log({ message: "Last element undone" });
+      // ✅ Remove from project.scene
+      await Project.findByIdAndUpdate(projectId, {
+        $pull: { scene: lastElement._id },
+      });
+
+      // ✅ Delete element
+      await Element.findByIdAndDelete(lastElement._id);
+
+      // ✅ Emit WITH elementId (IMPORTANT)
+      io.to(projectId).emit("element-undone", {
+        elementId: lastElement._id,
+        socketId: socket.id,
+      });
 
     } catch (error) {
       console.error("Undo error:", error);
-
     }
-    socket.to(projectId).emit("element-undone", { socketId: socket.id });
   });
 
   socket.on("delete-element", async ({ userId, projectId, elementId }) => {
