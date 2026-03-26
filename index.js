@@ -595,7 +595,11 @@ const startServer = async () => {
         console.log("✅ MongoDB connected");
 
         server.listen(PORT, () => {
-            console.log(`🚀 Server running on port ${PORT}`);
+          if (process.env.NODE_ENV === "development"){
+             console.log(`🚀 Server running on port ${PORT}`);
+           }else{
+            console.log("🚀 Vast server is running ! ")
+           }
         });
     } catch (err) {
         console.error("❌ Failed to connect to MongoDB:", err);
